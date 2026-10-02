@@ -997,3 +997,69 @@ test('a running state that expired 6 days ago is still caught up and recorded', 
   assert.equal(completed.id, endAt);
   assert.equal(shouldAlert(completed, T0), false);
 });
+
+// ---- review fixes (L2 review + blind verifier) ----------------------------
+
+test('the day key is the local date of endAt, not of the moment the code noticed it', () => {
+  const start = local(2026, 10, 2, 23, 30);
+  const running = run(initialState(), 'start', start).state;
+  const noticed = local(2026, 10, 3, 8, 0);
+  const { state, completed } = run(running, 'sync', noticed);
+  assert.equal(completed.endedAt, start + 25 * MIN);
+  assert.deepEqual(state.today, { day: '2026-10-02', count: 1 });
+  assert.equal(todayCount(state, noticed), 0);
+});
+
+test('idempotence holds even when a bogus future entry sorts to the top of the history', () => {
+  const endAt = T0 + 25 * MIN;
+  const raw = {
+    phase: 'work', status: 'running', endAt, plannedMs: 25 * MIN, cycle: 1,
+    today: { day: dayKey(endAt), count: 1 },
+    history: [{ id: 9e15, endedAt: 9e15, durationMs: 1 }, { id: endAt, endedAt: endAt, durationMs: 25 * MIN }],
+  };
+  const { state, completed } = run(normalizeState(raw, endAt + 1000), 'sync', endAt + 1000);
+  assert.equal(completed, null);
+  assert.equal(state.history.length, 2);
+  assert.equal(state.today.count, 1);
+});
+
+test('pausing never stores more remaining time than the planned length', () => {
+  const running = { ...working(T0), endAt: T0 + 25 * MIN + 30_000 }; // clock stepped back by 30 s
+  const paused = run(running, 'pause', T0).state;
+  assert.equal(paused.remainingMs, 25 * MIN);
+  assert.equal(normalizeState(paused, T0).status, 'paused');
+});
+
+test('catch-up window edges: exactly 7 days is recorded, 7 days + 1 ms is dropped', () => {
+  const week = 7 * 24 * 60 * MIN;
+  const mk = (endAt) => ({ phase: 'work', status: 'running', endAt, plannedMs: 25 * MIN, cycle: 0, today: { day: '', count: 0 }, history: [] });
+  assert.equal(run(normalizeState(mk(T0 - week), T0), 'sync', T0).completed.id, T0 - week);
+  const dropped = normalizeState(mk(T0 - week - 1), T0);
+  assert.equal(dropped.status, 'idle');
+  assert.equal(run(dropped, 'sync', T0).completed, null);
+});
+
+test('step called directly on a running state without a finite endAt records nothing', () => {
+  for (const endAt of [null, undefined, NaN, '5']) {
+    const bad = { ...initialState(), status: 'running', plannedMs: 25 * MIN, endAt };
+    const { completed, state } = run(bad, 'sync', T0);
+    assert.equal(completed, null);
+    assert.equal(state.history.length, 0);
+  }
+});
+
+test('a running or paused state with an unknown phase is dropped, never counted', () => {
+  const running = { phase: 'bogus', status: 'running', endAt: T0 - 1000, plannedMs: 25 * MIN, cycle: 0, today: { day: '', count: 0 }, history: [] };
+  const norm = normalizeState(running, T0);
+  assert.equal(norm.status, 'idle');
+  assert.equal(run(norm, 'sync', T0).completed, null);
+  assert.equal(normalizeState({ ...running, status: 'paused', remainingMs: 5 * MIN, endAt: null }, T0).status, 'idle');
+});
+
+test('DST spring-forward: a session across 02:00 -> 03:00 lasts 25 minutes of real time and counts for that day', () => {
+  const start = local(2026, 3, 29, 1, 50);
+  const running = run(initialState(), 'start', start).state;
+  const { completed, state } = run(running, 'sync', start + 25 * MIN);
+  assert.equal(completed.endedAt - start, 25 * MIN);
+  assert.equal(state.today.day, '2026-03-29');
+});

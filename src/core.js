@@ -73,16 +73,18 @@ function normalizeToday(raw) {
 export function normalizeState(raw, now) {
   try {
     if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return initialState();
-    const phase = PHASES.includes(raw.phase) ? raw.phase : 'work';
+    const phaseOk = PHASES.includes(raw.phase);
+    const phase = phaseOk ? raw.phase : 'work';
     const status = STATUSES.includes(raw.status) ? raw.status : 'idle';
     const cycle = Number.isInteger(raw.cycle) && raw.cycle >= 0 && raw.cycle < LIMITS.longEvery ? raw.cycle : 0;
     const out = { ...initialState(), phase, cycle, today: normalizeToday(raw.today), history: normalizeHistory(raw.history) };
-    if (status === 'running' && isNum(raw.endAt) && isPlanned(raw.plannedMs)
+    // an unknown phase leaves running/paused untrustworthy (work or break?): drop them, never count
+    if (status === 'running' && phaseOk && isNum(raw.endAt) && isPlanned(raw.plannedMs)
       && raw.endAt - now <= MAX_SESSION_MS + LIMITS.alertGraceMs
       && now - raw.endAt <= MAX_CATCHUP_MS) {
       return { ...out, status: 'running', endAt: raw.endAt, plannedMs: raw.plannedMs };
     }
-    if (status === 'paused' && isPlanned(raw.remainingMs) && isPlanned(raw.plannedMs)) {
+    if (status === 'paused' && phaseOk && isPlanned(raw.remainingMs) && isPlanned(raw.plannedMs)) {
       return { ...out, status: 'paused', remainingMs: raw.remainingMs, plannedMs: raw.plannedMs };
     }
     return out;
@@ -140,7 +142,7 @@ const cleared = (state, phase) => ({ ...state, phase, status: 'idle', endAt: nul
 // event that made us look. Only a work phase is recorded; the next phase is
 // left idle (never auto-started).
 function syncStep(state, now) {
-  if (state.status !== 'running' || !(now >= state.endAt)) return { state, completed: null };
+  if (state.status !== 'running' || !isNum(state.endAt) || !(now >= state.endAt)) return { state, completed: null };
   if (state.phase !== 'work') return { state: cleared(state, 'work'), completed: null };
 
   const id = state.endAt;
@@ -148,7 +150,7 @@ function syncStep(state, now) {
   const long = cycle >= LIMITS.longEvery;
   const base = cleared(state, long ? 'long' : 'short');
   base.cycle = long ? 0 : cycle;
-  if (state.history.length > 0 && state.history[0].id === id) return { state: base, completed: null };
+  if (state.history.some((h) => h.id === id)) return { state: base, completed: null };
 
   const key = dayKey(id);
   base.today = state.today.day === key ? { day: key, count: state.today.count + 1 } : { day: key, count: 1 };
@@ -169,7 +171,8 @@ function apply(state, settings, type, now) {
       return state;
     case 'pause':
       if (state.status !== 'running') return state;
-      return { ...state, status: 'paused', remainingMs: state.endAt - now, endAt: null };
+      // capped at the planned length: a load check rejects remainingMs above it
+      return { ...state, status: 'paused', remainingMs: Math.min(state.endAt - now, state.plannedMs), endAt: null };
     case 'reset':
       return state.status === 'idle' ? state : cleared(state, state.phase);
     case 'skip':
