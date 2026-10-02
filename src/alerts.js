@@ -11,6 +11,8 @@ const BEEP_S = 0.25;
 const GAP_S = 0.1;
 const PEAK_GAIN = 0.3;
 const ATTACK_S = 0.02;
+const LOOKAHEAD_S = 0.02;
+const NOTIFICATION_TAG = 'focus-timer'; // collapses repeats (two tabs, several sessions) in the OS centre
 
 const isPermission = (value) => PERMISSIONS.includes(value);
 
@@ -25,7 +27,7 @@ export function createAlerts({ AudioContextCtor, NotificationApi } = {}) {
         if (typeof AudioContextCtor !== 'function') return;
         ctx = new AudioContextCtor();
       }
-      if (ctx.state === 'suspended') {
+      if (ctx.state !== 'running' && ctx.state !== 'closed') { // 'suspended', or Safari's 'interrupted'
         const pending = ctx.resume();
         if (pending && typeof pending.catch === 'function') pending.catch(() => {});
       }
@@ -39,7 +41,7 @@ export function createAlerts({ AudioContextCtor, NotificationApi } = {}) {
   function chime() {
     try {
       if (!ctx || ctx.state !== 'running') return false;
-      const t0 = ctx.currentTime;
+      const t0 = ctx.currentTime + LOOKAHEAD_S; // never schedule in the past: the attack would click
       for (let i = 0; i < BEEPS; i += 1) {
         const start = t0 + i * (BEEP_S + GAP_S);
         const stop = start + BEEP_S;
@@ -74,11 +76,11 @@ export function createAlerts({ AudioContextCtor, NotificationApi } = {}) {
     return new Promise((resolve) => {
       const settle = (value) => resolve(isPermission(value) ? value : permission());
       const fallback = () => resolve(permission());
-      if (!NotificationApi || typeof NotificationApi.requestPermission !== 'function') {
-        fallback();
-        return;
-      }
       try {
+        if (!NotificationApi || typeof NotificationApi.requestPermission !== 'function') {
+          fallback();
+          return;
+        }
         // Promise form, or legacy callback form (returns undefined, calls the callback).
         const result = NotificationApi.requestPermission(settle);
         if (result && typeof result.then === 'function') result.then(settle, fallback);
@@ -92,7 +94,7 @@ export function createAlerts({ AudioContextCtor, NotificationApi } = {}) {
   function notify(title, body) {
     try {
       if (permission() !== 'granted') return false;
-      new NotificationApi(title, { body });
+      new NotificationApi(title, { body, tag: NOTIFICATION_TAG });
       return true;
     } catch {
       return false;

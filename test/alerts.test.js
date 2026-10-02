@@ -89,8 +89,12 @@ function fakeNotificationApi({ permission = 'default', mode = 'promise', result 
       return Promise.resolve(result);
     }
     if (mode === 'legacy') {
-      api.permission = result;
-      cb(result);
+      // Safari legacy form: returns undefined and calls the callback LATER. If the module does
+      // not pass a callback, the promise never settles and the test times out.
+      setTimeout(() => {
+        api.permission = result;
+        cb(result);
+      }, 0);
       return undefined;
     }
     if (mode === 'reject') return Promise.reject(new Error('nope'));
@@ -233,7 +237,7 @@ test('chime() on a running context schedules two 880 Hz beeps, oscillator -> gai
     assert.equal(osc.frequency.value, 880);
     assert.equal(osc.startCalls.length, 1);
     assert.equal(osc.stopCalls.length, 1);
-    assert.ok(osc.startCalls[0] >= ctx.currentTime, 'starts at or after now');
+    assert.ok(osc.startCalls[0] >= ctx.currentTime + 0.02, 'starts with a small lookahead so the attack is never in the past');
     const dur = osc.stopCalls[0] - osc.startCalls[0];
     assert.ok(dur > 0.2 && dur <= 0.3, `beep lasts ~0.25 s, got ${dur}`);
     assert.deepEqual(osc.connected, [ctx.gains[i]]);
@@ -397,7 +401,7 @@ test('notify() returns false (never throws) when the constructor throws', () => 
 test("notify() constructs with (title, { body }) and returns true when 'granted'", () => {
   const api = fakeNotificationApi({ permission: 'granted' });
   assert.equal(createAlerts({ NotificationApi: api.Ctor }).notify('Focus finito', 'Fai una pausa'), true);
-  assert.deepEqual(api.constructed, [['Focus finito', { body: 'Fai una pausa' }]]);
+  assert.deepEqual(api.constructed, [['Focus finito', { body: 'Fai una pausa', tag: 'focus-timer' }]]);
 });
 
 test('notify() reads the permission at call time, not at creation time', () => {
@@ -419,4 +423,29 @@ test('prime(), chime() and notify() never call requestPermission', () => {
   api.permission = 'granted';
   alerts.notify('t', 'b');
   assert.equal(api.requestCalls, 0);
+});
+
+// ---- review fixes ----------------------------------------------------------
+
+test('requestPermission() never rejects, even when reading requestPermission itself throws', async () => {
+  const api = {
+    get permission() { return 'default'; },
+    get requestPermission() { throw new Error('blocked getter'); },
+  };
+  assert.equal(await createAlerts({ NotificationApi: api }).requestPermission(), 'default');
+});
+
+test('requestPermission() ignores a malformed resolved value and reports the current permission', async () => {
+  const api = fakeNotificationApi({ permission: 'denied' });
+  api.Ctor.requestPermission = () => Promise.resolve('maybe');
+  assert.equal(await createAlerts({ NotificationApi: api.Ctor }).requestPermission(), 'denied');
+});
+
+test("prime() also resumes Safari's non-standard 'interrupted' state, but not 'closed'", () => {
+  const interrupted = fakeAudioCtor({ initialState: 'interrupted' });
+  createAlerts({ AudioContextCtor: interrupted }).prime();
+  assert.equal(interrupted.instances[0].resumeCalls, 1);
+  const closed = fakeAudioCtor({ initialState: 'closed' });
+  createAlerts({ AudioContextCtor: closed }).prime();
+  assert.equal(closed.instances[0].resumeCalls, 0);
 });
