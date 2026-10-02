@@ -12,7 +12,7 @@ This project relies on the private repo `alessiogarifo92/claude-skills` (skills,
    Claude Code detects agent files added to an existing `~/.claude/agents/` without a restart, but not when that directory did not exist at session start (typical in a fresh container). Then either restart the session once, or use the fallback above for this session. `templates/session-start-hook.sh` can install everything before the session starts (best effort).
 4. If the attach fails, say so in visible text and ask the user how to proceed. Never continue silently without the rules.
 
-Run / preview (manual gate): `none` yet — set at stage 4.5. Until then the gate is parked with local commands.
+Run / preview (manual gate): no per-PR preview (decision D2). Serve the worktree locally: `cd <worktree> && python3 -m http.server 8000`, then open `http://localhost:8000/` (ES modules do not load from `file://`). In a remote session the user cannot reach the container's localhost: record the evidence with Playwright and park the gate as "needs local check" with these commands.
 
 Needed environment variables / connectors for this project: none.
 
