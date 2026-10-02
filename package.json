@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --import ./test/setup-tz.mjs --test \"test/**/*.test.js\""
   }
 }
