@@ -33,6 +33,10 @@ export function createStore(backing, options = {}) {
   const { version = VERSION, migrations = {} } = options;
   let memory = backing ? null : new Map();
 
+  // Known limitation (latent until VERSION > 1): only current-version keys are seeded, so
+  // a migration still pending when the fallback starts is lost for that session (the backing
+  // itself is untouched and a reload retries it). Seed older versions when the first real
+  // migration is written.
   // Switch to memory for good. Seed it once, best effort, with what the backing still
   // holds for the current version, so the name that was not just written stays readable
   // (the core re-reads the store before every action and must not see "nothing stored").
@@ -58,7 +62,7 @@ export function createStore(backing, options = {}) {
       return raw === undefined ? null : raw;
     } catch {
       fallToMemory();
-      return null;
+      return memory.has(key) ? memory.get(key) : null;
     }
   }
 

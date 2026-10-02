@@ -501,3 +501,17 @@ test('the migration loop stops before the current version', () => {
   store.loadState();
   assert.deepEqual(calls, [0]);
 });
+
+test('a one-off getItem failure still returns the value that the seeded fallback holds', () => {
+  const backing = fakeBacking({ 'focusTimer:v1:state': '{"s":1}' });
+  let first = true;
+  const realGet = backing.getItem;
+  backing.getItem = (key) => {
+    if (first) { first = false; throw securityError(); }
+    return realGet(key);
+  };
+  const store = createStore(backing);
+  assert.equal(store.isPersistent(), true);
+  assert.deepEqual(store.loadState(), { s: 1 });
+  assert.equal(store.isPersistent(), false);
+});
