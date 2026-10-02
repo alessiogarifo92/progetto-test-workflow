@@ -38,7 +38,7 @@
       <p class="helper">Minutes, 1-120</p>
     </section>
 
-    <section class="stage" aria-label="Timer">
+    <section class="stage" id="stage" aria-label="Timer">
       <div class="ring-wrap">
         <svg class="ring" viewBox="0 0 280 280" aria-hidden="true" focusable="false">
           <defs>
@@ -52,26 +52,26 @@
         </svg>
         <div class="ring-center">
           <div class="digits" id="digits">25:00</div>
-          <svg class="check" id="check" viewBox="0 0 24 24" width="96" height="96" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <svg class="check" id="check" hidden viewBox="0 0 24 24" width="96" height="96" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
             <path d="M5 12.5l4.5 4.5L19 7.5"/>
           </svg>
         </div>
       </div>
 
-      <h2 class="heading" id="heading">Session complete</h2>
+      <h2 class="heading" id="heading" hidden>Session complete</h2>
       <p class="label" id="label">Ready</p>
-      <p class="note" id="away-note">Completed while you were away</p>
+      <p class="note" id="away-note" hidden>Completed while you were away</p>
 
       <div class="actions">
         <button type="button" class="btn btn-primary" id="btn-primary" data-action="start">Start</button>
-        <button type="button" class="btn btn-ghost" id="btn-secondary" data-action="reset">Reset</button>
+        <button type="button" class="btn btn-ghost" id="btn-secondary" data-action="reset" hidden>Reset</button>
       </div>
 
-      <p class="quiet" id="quiet"></p>
-      <p class="note" id="unsaved">Progress won't be saved on this device</p>
+      <p class="quiet" id="quiet" hidden></p>
+      <p class="note" id="unsaved" hidden>Progress won't be saved on this device</p>
     </section>
 
-    <section class="panel prefs" id="prefs" aria-label="Alerts">
+    <section class="panel prefs" id="prefs" aria-label="Alerts" hidden>
       <label class="check-row"><input type="checkbox" id="pref-sound"> <span>Sound</span></label>
       <label class="check-row"><input type="checkbox" id="pref-notify"> <span>Notifications</span></label>
     </section>
@@ -81,7 +81,7 @@
       <p class="helper">No sessions yet. Finish a focus session and it shows up here.</p>
     </section>
 
-    <section class="panel history" id="history" aria-labelledby="history-title">
+    <section class="panel history" id="history" aria-labelledby="history-title" hidden>
       <h2 class="history-title" id="history-title">Last 10 sessions</h2>
       <ul class="history-list" id="history-list"></ul>
     </section>

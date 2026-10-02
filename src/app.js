@@ -1,22 +1,24 @@
 // App shell: the only module that touches document, window, timers, Date.now and storage.
-// Time comes from core (endAt), never from the repaint interval. The end of a session is ONE
-// unchained setTimeout armed only from commit(); every other path just re-syncs through dispatch.
+// What to show is decided in view.js (pure, tested); this file wires events to the timer and
+// applies the view to the DOM. Time comes from core (endAt), never from the repaint interval.
+// The end of a session is ONE unchained setTimeout armed only from commit(); every other path
+// just re-syncs through dispatch.
 
-import {
-  createTimer, durationMs, endDelay, formatMmSs, LIMITS, remainingMs, shouldAlert, todayCount,
-} from './core.js';
+import { createTimer, endDelay, remainingMs, shouldAlert } from './core.js';
 import { createStore, getLocalStorage } from './store.js';
+import { buildView, eventAnnouncement } from './view.js';
 
 const store = createStore(getLocalStorage());
 const timer = createTimer({ now: () => Date.now(), store });
 
 const RING_C = 2 * Math.PI * 135; // circumference of the 280px ring (r = 135)
 const REPAINT_MS = 250;
+const ANNOUNCE_DELAY_MS = 50;
 
 const $ = (id) => document.getElementById(id);
 const el = {
   app: $('app'), todayCount: $('today-count'), emptyCount: $('empty-count'),
-  settingsBtn: $('settings-btn'), settings: $('settings'),
+  settingsBtn: $('settings-btn'), settings: $('settings'), stage: $('stage'),
   setWork: $('set-work'), setShort: $('set-short'), setLong: $('set-long'),
   progress: $('ring-progress'), maskArc: $('ring-mask-arc'),
   digits: $('digits'), check: $('check'), heading: $('heading'), label: $('label'), awayNote: $('away-note'),
@@ -28,9 +30,11 @@ const el = {
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 let handle = null; // the one pending end-of-session timeout
+let announceHandle = null;
 let complete = false; // UI flag: the complete screen is showing
 let away = false; // that completion was noticed late (not worth an alert)
-let lastMinute = null; // last full-minute mark announced while running
+let lastMinute = null; // last full-minute mark seen while running
+let settingsOpen = false;
 let historySig = '';
 
 // ---------------------------------------------------------------- wiring
@@ -43,72 +47,65 @@ function commit() {
   if (d !== null) handle = setTimeout(onDue, d);
 }
 
-function onDue() {
-  settle(timer.dispatch({ type: 'sync' }));
-}
-
 // After any dispatch/hydrate: remember a completion, re-arm, repaint.
-function settle(completion) {
+function settle(completion, text) {
   if (completion) {
     complete = true;
     away = !shouldAlert(completion, Date.now());
-    announce('Session complete');
   }
   commit();
-  render();
+  render(text);
+}
+
+function run(type) {
+  const before = timer.getState();
+  const completion = timer.dispatch({ type });
+  settle(completion, eventAnnouncement({ type, before, state: timer.getState(), completion }));
+}
+
+function onDue() {
+  run('sync');
 }
 
 function act(type) {
-  const before = timer.getState().status;
   if (type !== 'pause') {
     complete = false;
     away = false;
   }
-  const completion = timer.dispatch({ type });
-  const state = timer.getState();
-  if (type === 'start' && state.status === 'running') {
-    announce(before === 'paused' ? 'Resumed' : `Started, ${minutesLabel(Math.round(state.plannedMs / 60000))}`);
-  } else if (type === 'pause' && state.status === 'paused') {
-    announce(`Paused, ${formatMmSs(state.remainingMs)} remaining`);
-  }
-  settle(completion);
-}
-
-function resync() {
-  settle(timer.dispatch({ type: 'sync' }));
+  run(type);
+  // Reset and Skip hide the secondary button that had focus: keep focus on a live control.
+  if (type === 'reset' || type === 'skip') el.primary.focus();
 }
 
 // ---------------------------------------------------------------- render
-
-const minutesLabel = (n) => `${n} ${n === 1 ? 'minute' : 'minutes'}`;
-const clock = (min) => `${min}:00`;
-
-function announce(text) {
-  el.live.textContent = text;
-}
-
-function hhmm(ms) {
-  const d = new Date(ms);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
 
 // toggleAttribute, not .hidden: SVG elements have no hidden property.
 function show(node, on) {
   node.toggleAttribute('hidden', !on);
 }
 
-function renderHistory(history) {
-  const sig = history.map((h) => h.id).join(',');
+// A text change in an aria-live node is only spoken when the text differs: clear first, then set
+// in the next task so identical consecutive messages are announced again.
+function announce(text) {
+  clearTimeout(announceHandle);
+  el.live.textContent = '';
+  announceHandle = setTimeout(() => {
+    el.live.textContent = text;
+  }, ANNOUNCE_DELAY_MS);
+}
+
+function renderHistory(rows) {
+  const sig = rows.map((r) => r.iso).join(',');
   if (sig === historySig) return;
   historySig = sig;
-  el.historyList.replaceChildren(...history.map((h) => {
+  el.historyList.replaceChildren(...rows.map((r) => {
     const li = document.createElement('li');
     const time = document.createElement('time');
-    time.dateTime = new Date(h.endedAt).toISOString();
-    time.textContent = hhmm(h.endedAt);
+    time.dateTime = r.iso;
+    time.textContent = r.hhmm;
     const dur = document.createElement('span');
     dur.className = 'dur';
-    dur.textContent = `Work ${Math.round(h.durationMs / 60000)} min`;
+    dur.textContent = r.text;
     li.append(time, dur);
     return li;
   }));
@@ -118,97 +115,62 @@ function syncInput(input, value) {
   if (document.activeElement !== input) input.value = String(value);
 }
 
-function render() {
-  const now = Date.now();
-  const state = timer.getState();
+function render(eventText = null) {
   const settings = timer.getSettings();
-  // The complete screen only makes sense while the break that followed is still untouched.
-  if (state.status !== 'idle' || state.phase === 'work') complete = false;
-  if (!complete) away = false;
-  const screen = complete ? 'complete' : state.status;
-  const isWork = state.phase === 'work';
-  const running = state.status === 'running';
+  const v = buildView({
+    state: timer.getState(),
+    settings,
+    now: Date.now(),
+    ui: { complete, away, lastMinute, reduceMotion: reduceMotion.matches, persistent: store.isPersistent(), settingsOpen },
+  });
+  complete = v.complete;
+  away = v.away;
+  lastMinute = v.lastMinute;
 
-  const rem = remainingMs(state, settings, now);
-  const shown = reduceMotion.matches ? Math.ceil(rem / 1000) * 1000 : rem;
-  const planned = state.status === 'idle' ? durationMs(state.phase, settings) : state.plannedMs || rem;
-  const frac = state.status === 'running' || state.status === 'paused' ? Math.min(1, Math.max(0, shown / planned)) : 1;
+  el.app.dataset.screen = v.screen;
+  el.app.dataset.phase = v.phase;
 
-  el.app.dataset.screen = screen;
-  el.app.dataset.phase = isWork ? 'work' : 'break';
-
-  // ring
   el.maskArc.setAttribute('stroke-dasharray', String(RING_C));
-  el.maskArc.setAttribute('stroke-dashoffset', String(RING_C * (1 - frac)));
-  if (screen === 'paused') el.progress.setAttribute('stroke-dasharray', '2 8');
+  el.maskArc.setAttribute('stroke-dashoffset', String(RING_C * (1 - v.frac)));
+  if (v.dashed) el.progress.setAttribute('stroke-dasharray', '2 8');
   else el.progress.removeAttribute('stroke-dasharray');
 
-  const text = formatMmSs(rem);
-  el.digits.textContent = text;
-  el.digits.classList.toggle('long', text.length > 5);
-  show(el.digits, screen !== 'complete');
-  show(el.check, screen === 'complete');
+  el.digits.textContent = v.digits;
+  el.digits.classList.toggle('long', v.digitsLong);
+  show(el.digits, v.digitsVisible);
+  show(el.check, v.checkVisible);
+  show(el.heading, v.headingVisible);
+  show(el.label, v.labelVisible);
+  show(el.awayNote, v.awayVisible);
+  el.label.textContent = v.label;
 
-  // labels and controls
-  let label = 'Ready';
-  if (screen === 'running') label = isWork ? `Work · session ${state.cycle + 1}` : state.phase === 'long' ? 'Long break' : 'Short break';
-  else if (screen === 'paused') label = 'Paused';
-  else if (screen === 'idle' && !isWork) label = state.phase === 'long' ? 'Long break ready' : 'Short break ready';
-  el.label.textContent = label;
-  show(el.label, screen !== 'complete');
-  show(el.heading, screen === 'complete');
-  show(el.awayNote, screen === 'complete' && away);
-
-  const breakMin = clock(durationMs(state.phase, settings) / 60000);
-  let primary = ['start', 'Start'];
-  let secondary = null;
-  if (screen === 'running') [primary, secondary] = [['pause', 'Pause'], ['reset', 'Reset']];
-  else if (screen === 'paused') [primary, secondary] = [['start', 'Resume'], ['reset', 'Reset']];
-  else if (screen === 'complete') [primary, secondary] = [['start', `Start ${state.phase === 'long' ? 'long ' : ''}break ${breakMin}`], ['skip', 'Skip']];
-  else if (!isWork) primary = ['start', 'Start break'];
-  el.primary.dataset.action = primary[0];
-  el.primary.textContent = primary[1];
-  show(el.secondary, secondary !== null);
-  if (secondary) {
-    el.secondary.dataset.action = secondary[0];
-    el.secondary.textContent = secondary[1];
+  el.primary.dataset.action = v.primary.action;
+  el.primary.textContent = v.primary.text;
+  show(el.secondary, v.secondary.visible);
+  if (v.secondary.visible) {
+    el.secondary.dataset.action = v.secondary.action;
+    el.secondary.textContent = v.secondary.text;
   }
 
-  // today count, quiet line, empty/history/prefs
-  const count = todayCount(state, now);
-  el.todayCount.textContent = String(count);
-  el.emptyCount.textContent = String(count);
-  const onQuiet = screen === 'running' || screen === 'paused';
-  show(el.quiet, onQuiet);
-  if (onQuiet) {
-    const next = isWork
-      ? `break ${clock(durationMs(state.cycle + 1 >= LIMITS.longEvery ? 'long' : 'short', settings) / 60000)}`
-      : `work ${clock(settings.workMin)}`;
-    el.quiet.textContent = `Today ${count} · next: ${next}`;
-  }
-  const hasHistory = state.history.length > 0;
-  show(el.empty, screen === 'idle' && !hasHistory);
-  show(el.history, (screen === 'idle' || screen === 'complete') && hasHistory);
-  show(el.prefs, screen === 'complete');
-  renderHistory(state.history);
+  el.todayCount.textContent = String(v.todayCount);
+  el.emptyCount.textContent = String(v.todayCount);
+  show(el.quiet, v.quiet.visible);
+  el.quiet.textContent = v.quiet.text;
+  show(el.empty, v.emptyVisible);
+  show(el.history, v.historyVisible);
+  show(el.prefs, v.prefsVisible);
+  show(el.unsaved, v.unsavedVisible);
+  renderHistory(v.history);
+
   el.sound.checked = settings.sound;
   el.notify.checked = settings.notify;
   syncInput(el.setWork, settings.workMin);
   syncInput(el.setShort, settings.shortMin);
   syncInput(el.setLong, settings.longMin);
-  show(el.unsaved, !store.isPersistent());
 
-  // document title and the polite full-minute announcements
-  document.title = running ? `${text} ${isWork ? 'Work' : 'Break'}` : 'Focus Timer';
-  if (running) {
-    const m = Math.ceil(rem / 60000);
-    if (m !== lastMinute) {
-      if (lastMinute !== null && m > 0) announce(`${minutesLabel(m)} remaining`);
-      lastMinute = m;
-    }
-  } else {
-    lastMinute = null;
-  }
+  document.title = v.title;
+  const text = eventText ?? v.announce;
+  if (text) announce(text);
 }
 
 // Safety net only: the repaint never decides time, it just notices an end the timeout missed.
@@ -220,13 +182,21 @@ function tick() {
 
 // ---------------------------------------------------------------- events
 
-el.primary.addEventListener('click', () => act(el.primary.dataset.action));
+// A double-click or double-tap on the shared primary button must not Start and then Pause.
+el.primary.addEventListener('click', (e) => {
+  if (e.detail > 1) return;
+  act(el.primary.dataset.action);
+});
 el.secondary.addEventListener('click', () => act(el.secondary.dataset.action));
 
+// The alert toggles live in the complete-screen panel and in the settings sheet: one node, moved.
 el.settingsBtn.addEventListener('click', () => {
-  const open = el.settingsBtn.getAttribute('aria-expanded') !== 'true';
-  el.settingsBtn.setAttribute('aria-expanded', String(open));
-  show(el.settings, open);
+  settingsOpen = el.settingsBtn.getAttribute('aria-expanded') !== 'true';
+  el.settingsBtn.setAttribute('aria-expanded', String(settingsOpen));
+  show(el.settings, settingsOpen);
+  if (settingsOpen) el.settings.append(el.prefs);
+  else el.stage.after(el.prefs);
+  render();
 });
 
 for (const [input, key] of [[el.setWork, 'workMin'], [el.setShort, 'shortMin'], [el.setLong, 'longMin']]) {
@@ -246,16 +216,22 @@ el.notify.addEventListener('change', () => {
 });
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') resync();
+  if (document.visibilityState === 'visible') run('sync');
 });
 window.addEventListener('pageshow', (e) => {
-  if (e.persisted) resync();
+  if (e.persisted) run('sync');
 });
 window.addEventListener('storage', (e) => {
-  if (e.key === null || e.key.startsWith('focusTimer:')) resync();
+  if (e.key === null || e.key.startsWith('focusTimer:')) run('sync');
 });
 
 // ---------------------------------------------------------------- start
 
-settle(timer.hydrate());
+// The repaint safety net is armed first, so a failure in the first render cannot disable it.
 setInterval(tick, REPAINT_MS);
+try {
+  const completion = timer.hydrate();
+  settle(completion, completion ? 'Session complete' : null);
+} catch (err) {
+  console.error(err);
+}

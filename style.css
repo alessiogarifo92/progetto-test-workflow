@@ -132,6 +132,9 @@ input[type="number"] {
 
 .prefs { display: flex; flex-direction: column; }
 
+/* the same alert toggles, moved into the settings sheet while it is open */
+.settings .prefs { padding: var(--s2) 0 0; background: none; border-top: 1px solid rgba(157, 184, 178, 0.2); border-radius: 0; margin-top: var(--s2); }
+
 .check-row {
   display: flex;
   align-items: center;
