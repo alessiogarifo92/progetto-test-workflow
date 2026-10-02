@@ -38,7 +38,7 @@ The user cannot lose a session that already ended by pressing a button late. The
 | # | S (after sync)                 | Event   | Result                                                                                                  | Recorded |
 |---|--------------------------------|---------|---------------------------------------------------------------------------------------------------------|----------|
 | 1 | idle                           | start   | running; `plannedMs = durationMs(phase)`; `endAt = now + plannedMs`; `remainingMs = null`              | no       |
-| 2 | running (`now < endAt`)        | pause   | paused; `remainingMs = endAt - now`; `endAt = null`; `plannedMs` kept                                   | no       |
+| 2 | running (`now < endAt`)        | pause   | paused; `remainingMs = min(endAt - now, plannedMs)`; `endAt = null`; `plannedMs` kept                                   | no       |
 | 3 | paused                         | start   | running; `endAt = now + remainingMs`; `remainingMs = null`; `plannedMs` kept                            | no       |
 | 4 | running, expired (sync)        | sync    | COMPLETE (see below), next phase idle                                                                   | work only |
 | 5 | running (`now < endAt`)        | sync    | unchanged                                                                                               | no       |
@@ -61,7 +61,7 @@ A completed session is a **work** phase that is `running` when a `sync` sees `no
 - `id = endedAt = endAt` (the scheduled end, NOT the moment the code noticed it).
 - `durationMs = plannedMs`.
 - `today`: let `key = dayKey(endAt)`. If `key !== today.day`, `today = { day: key, count: 1 }`; otherwise `count + 1`.
-- `history`: prepend `{ id, endedAt, durationMs }`, then cap to `LIMITS.historyMax` (newest first). **Idempotent:** if `history[0].id === id`, nothing is appended and `today` is not incremented again, and the call reports `completed = null` (it was already recorded and alerted elsewhere).
+- `history`: prepend `{ id, endedAt, durationMs }`, then cap to `LIMITS.historyMax` (newest first). **Idempotent:** if ANY history entry already has `id === id`, nothing is appended and `today` is not incremented again, and the call reports `completed = null` (it was already recorded and alerted elsewhere).
 - Phase advance, work: `cycle + 1`; if that reaches `LIMITS.longEvery` (4) the next phase is `long` and `cycle = 0`, otherwise `short`. Short/long completion: next phase is `work`, nothing recorded, `cycle` unchanged.
 - The next phase is **never auto-started**: it is left `idle`. So a catch-up after a long absence produces at most one completion; a break that expired while the user was away simply ends silently and the next state is `work`, idle.
 
@@ -98,7 +98,7 @@ Never throws. Corrupt but JSON-valid input must NOT create a phantom session or 
 - `cycle`: integer 0..3, else 0.
 - `history`: must be an array; each entry kept only if `id`, `endedAt`, `durationMs` are finite numbers; sorted newest first (by `endedAt`), capped to 10.
 - `today`: `day` matching `YYYY-MM-DD` and `count` an integer >= 0, else `{ day: '', count: 0 }`.
-- **running** requires a finite `endAt` AND a finite `plannedMs` in (0, 120 min]. `endAt` may be in the past (the catch-up case: it expired while the page was closed and completes on the next sync) but not absurdly in the future (`endAt - now <= 120 min + 60 s`) and not older than the 7-day catch-up window (`now - endAt <= 7 days`): an older running state is treated as corrupt and becomes `idle` without recording anything (a garbage `endAt` such as `5` must never create a 1970 session).
+- **running** requires a finite `endAt` AND a finite `plannedMs` in (0, 120 min]. `endAt` may be in the past (the catch-up case: it expired while the page was closed and completes on the next sync) but not absurdly in the future (`endAt - now <= 120 min + 60 s`) and not older than the 7-day catch-up window (`now - endAt <= 7 days`): an older running state is treated as corrupt and becomes `idle` without recording anything (a garbage `endAt` such as `5` must never create a 1970 session). An unknown `phase` on a running or paused state also drops it to `idle` and records nothing (work or break cannot be told). `step()` clears a running state without a finite `endAt` and a paused state without a usable `remainingMs` before applying anything.
 - **paused** requires a finite `remainingMs` in (0, 120 min] and a finite `plannedMs` in (0, 120 min] (needed to record the duration if it is later completed).
 - Anything failing the above -> `idle`, same phase, time fields `null`. A valid running/paused state keeps only its own time fields (running: `endAt`, `plannedMs`; paused: `remainingMs`, `plannedMs`).
 

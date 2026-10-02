@@ -171,7 +171,7 @@ function apply(state, settings, type, now) {
       return state;
     case 'pause':
       if (state.status !== 'running') return state;
-      // capped at the planned length: a load check rejects remainingMs above it
+      // capped at the planned length (matters only near 120 min: the load check caps remainingMs at 120 min)
       return { ...state, status: 'paused', remainingMs: Math.min(state.endAt - now, state.plannedMs), endAt: null };
     case 'reset':
       return state.status === 'idle' ? state : cleared(state, state.phase);
@@ -182,8 +182,12 @@ function apply(state, settings, type, now) {
   }
 }
 
+// step() is exported and promises Rule 0 "for any caller": a running/paused state with
+// unusable time fields is cleared (never counted) before anything else looks at it.
+const unusable = (st) => (st.status === 'running' && !isNum(st.endAt)) || (st.status === 'paused' && !isPlanned(st.remainingMs));
+
 export function step(state, settings, event, now) {
-  const synced = syncStep(state, now);
+  const synced = syncStep(unusable(state) ? cleared(state, state.phase) : state, now);
   const type = event !== null && typeof event === 'object' ? event.type : undefined;
   return { state: apply(synced.state, settings, type, now), completed: synced.completed };
 }

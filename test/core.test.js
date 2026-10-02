@@ -1063,3 +1063,16 @@ test('DST spring-forward: a session across 02:00 -> 03:00 lasts 25 minutes of re
   assert.equal(completed.endedAt - start, 25 * MIN);
   assert.equal(state.today.day, '2026-03-29');
 });
+
+test('step on a malformed running/paused state clears it, so pause -> start -> sync cannot record a 1970 session', () => {
+  const bad = { ...initialState(), status: 'running', plannedMs: 25 * MIN, endAt: null };
+  let st = run(bad, 'pause', T0).state;
+  assert.equal(st.status, 'idle');
+  st = run(st, 'start', T0 + 1000).state;
+  assert.equal(st.endAt, T0 + 1000 + 25 * MIN); // a real session, not endAt = 1000
+  const { completed } = run(st, 'sync', T0 + 26 * MIN);
+  assert.equal(completed.id, T0 + 1000 + 25 * MIN);
+  const badPaused = { ...initialState(), status: 'paused', plannedMs: 25 * MIN, remainingMs: null };
+  assert.equal(run(badPaused, 'sync', T0).state.status, 'idle');
+  assert.equal(run(badPaused, 'start', T0).state.endAt, T0 + 25 * MIN); // idle start, not a resume from null
+});
