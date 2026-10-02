@@ -5,11 +5,16 @@
 // just re-syncs through dispatch.
 
 import { createTimer, endDelay, remainingMs, shouldAlert } from './core.js';
+import { createAlerts } from './alerts.js';
 import { createStore, getLocalStorage } from './store.js';
 import { buildView, eventAnnouncement } from './view.js';
 
 const store = createStore(getLocalStorage());
 const timer = createTimer({ now: () => Date.now(), store });
+const alerts = createAlerts({
+  AudioContextCtor: window.AudioContext || window.webkitAudioContext,
+  NotificationApi: window.Notification,
+});
 
 const RING_C = 2 * Math.PI * 135; // circumference of the 280px ring (r = 135)
 const REPAINT_MS = 250;
@@ -23,7 +28,7 @@ const el = {
   progress: $('ring-progress'), maskArc: $('ring-mask-arc'),
   digits: $('digits'), check: $('check'), heading: $('heading'), label: $('label'), awayNote: $('away-note'),
   primary: $('btn-primary'), secondary: $('btn-secondary'), quiet: $('quiet'), unsaved: $('unsaved'),
-  prefs: $('prefs'), sound: $('pref-sound'), notify: $('pref-notify'),
+  prefs: $('prefs'), notifyHint: $('notify-hint'), sound: $('pref-sound'), notify: $('pref-notify'),
   empty: $('empty'), history: $('history'), historyList: $('history-list'),
   live: $('live'),
 };
@@ -52,9 +57,17 @@ function settle(completion, text) {
   if (completion) {
     complete = true;
     away = !shouldAlert(completion, Date.now());
+    if (!away) fireAlerts();
   }
   commit();
   render(text);
+}
+
+// Chime and system notification for a session that ended just now (the 60 s grace is the core's call).
+function fireAlerts() {
+  const settings = timer.getSettings();
+  if (settings.sound) alerts.chime();
+  if (settings.notify) alerts.notify('Session complete', 'Time for a break.');
 }
 
 function run(type) {
@@ -184,6 +197,7 @@ function tick() {
 
 // A double-click or double-tap on the shared primary button must not Start and then Pause.
 el.primary.addEventListener('click', (e) => {
+  alerts.prime(); // browsers only start audio inside a user gesture, so every Start click primes it
   if (e.detail > 1) return;
   act(el.primary.dataset.action);
 });
@@ -210,10 +224,26 @@ el.sound.addEventListener('change', () => {
   timer.updateSettings({ sound: el.sound.checked });
   render();
 });
-el.notify.addEventListener('change', () => {
-  timer.updateSettings({ notify: el.notify.checked });
+// Permission is asked only here, from the click on the toggle, never on load.
+el.notify.addEventListener('change', async () => {
+  const wanted = el.notify.checked;
+  show(el.notifyHint, false);
+  timer.updateSettings({ notify: wanted });
+  if (wanted) {
+    const result = await alerts.requestPermission();
+    if (result !== 'granted') {
+      timer.updateSettings({ notify: false });
+      el.notifyHint.textContent = result === 'denied'
+        ? 'Notifications are blocked for this site in the browser settings.'
+        : 'This browser does not support notifications.';
+      show(el.notifyHint, true);
+    }
+  }
   render();
 });
+
+// A reload or another tab can resume a running session without a Start click: prime on the first gesture.
+for (const type of ['pointerdown', 'keydown']) document.addEventListener(type, () => alerts.prime(), { once: true });
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') run('sync');
