@@ -33,8 +33,21 @@ export function createStore(backing, options = {}) {
   const { version = VERSION, migrations = {} } = options;
   let memory = backing ? null : new Map();
 
+  // Switch to memory for good. Seed it once, best effort, with what the backing still
+  // holds for the current version, so the name that was not just written stays readable
+  // (the core re-reads the store before every action and must not see "nothing stored").
   function fallToMemory() {
-    if (!memory) memory = new Map();
+    if (memory) return;
+    memory = new Map();
+    if (!backing) return;
+    for (const n of NAMES) {
+      try {
+        const raw = backing.getItem(storageKey(n, version));
+        if (raw !== null && raw !== undefined) memory.set(storageKey(n, version), raw);
+      } catch {
+        // an unreadable key just stays empty
+      }
+    }
   }
 
   // Raw string or null. A throwing backing switches the store to memory for good.
@@ -73,8 +86,17 @@ export function createStore(backing, options = {}) {
         if (typeof fn === 'function') data = fn(data);
       }
       const result = data?.[name] ?? null;
-      if (result !== null) writeRaw(storageKey(name, version), JSON.stringify(result));
-      return result;
+      if (result === null) return null;
+      // Same round trip as save(): the first load must equal every later load.
+      let raw;
+      try {
+        raw = JSON.stringify(result);
+      } catch {
+        return null;
+      }
+      if (typeof raw !== 'string') return null;
+      writeRaw(storageKey(name, version), raw);
+      return parse(raw);
     }
     return null;
   }
@@ -89,6 +111,9 @@ export function createStore(backing, options = {}) {
     }
   }
 
+  // Returns true only if the value reached the backing storage. It is false both when the store
+  // fell back to memory and when the value cannot be serialised: the UI must use isPersistent()
+  // (not this return value) for its "not saved on this device" notice.
   function save(name, value) {
     let raw;
     try {

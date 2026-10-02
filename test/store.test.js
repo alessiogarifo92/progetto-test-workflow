@@ -430,3 +430,74 @@ test('default options use VERSION 1 with no migrations', () => {
   assert.deepEqual(store.loadState(), { a: 1 });
   assert.equal(backing.data.has('focusTimer:v1:state'), true);
 });
+
+// ---- review fixes -------------------------------------------------------
+
+function failingSetItem(backing) {
+  backing.setItem = () => { throw quotaError(); };
+  return backing;
+}
+
+test('after a failed saveState the persisted settings are still readable (memory seeded from the backing)', () => {
+  const backing = fakeBacking({
+    'focusTimer:v1:state': '{"completed":7}',
+    'focusTimer:v1:settings': '{"workMin":50}',
+  });
+  failingSetItem(backing);
+  const store = createStore(backing);
+  assert.equal(store.saveState({ completed: 8 }), false);
+  assert.equal(store.isPersistent(), false);
+  assert.deepEqual(store.loadSettings(), { workMin: 50 });
+  assert.deepEqual(store.loadState(), { completed: 8 }); // the new value wins over the seeded one
+});
+
+test('after a failed saveSettings the persisted state is still readable', () => {
+  const backing = fakeBacking({
+    'focusTimer:v1:state': '{"completed":7}',
+    'focusTimer:v1:settings': '{"workMin":50}',
+  });
+  failingSetItem(backing);
+  const store = createStore(backing);
+  assert.equal(store.saveSettings({ workMin: 40 }), false);
+  assert.deepEqual(store.loadState(), { completed: 7 });
+  assert.deepEqual(store.loadSettings(), { workMin: 40 });
+});
+
+test('seeding the memory fallback never throws when getItem also fails', () => {
+  const backing = fakeBacking({ 'focusTimer:v1:state': '{"completed":7}' });
+  backing.getItem = () => { throw securityError(); };
+  failingSetItem(backing);
+  const store = createStore(backing);
+  assert.equal(store.saveState({ completed: 8 }), false);
+  assert.deepEqual(store.loadState(), { completed: 8 });
+  assert.equal(store.loadSettings(), null);
+});
+
+test('migration result goes through the same JSON round trip as a saved value', () => {
+  const when = new Date(Date.UTC(2026, 9, 2));
+  const backing = fakeBacking({ 'focusTimer:v0:state': '{"a":1}' });
+  const store = createStore(backing, { version: 1, migrations: { 0: () => ({ state: { when, u: undefined, n: NaN } }) } });
+  const first = store.loadState();
+  const second = store.loadState();
+  assert.deepEqual(first, second);
+  assert.deepEqual(first, { when: when.toISOString(), n: null });
+});
+
+test('a migration yielding a non-serialisable state writes nothing and returns null', () => {
+  const backing = fakeBacking({ 'focusTimer:v0:state': '{"a":1}' });
+  const store = createStore(backing, { version: 1, migrations: { 0: () => ({ state: () => 1 }) } });
+  assert.equal(store.loadState(), null);
+  assert.deepEqual(backing.calls.setItem, []);
+  assert.equal(store.isPersistent(), true);
+});
+
+test('the migration loop stops before the current version', () => {
+  const calls = [];
+  const backing = fakeBacking({ 'focusTimer:v0:state': '{"a":1}' });
+  const store = createStore(backing, {
+    version: 1,
+    migrations: { 0: (d) => { calls.push(0); return d; }, 1: (d) => { calls.push(1); return d; } },
+  });
+  store.loadState();
+  assert.deepEqual(calls, [0]);
+});
