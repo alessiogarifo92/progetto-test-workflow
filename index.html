@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10201E">
+  <meta name="color-scheme" content="dark">
+  <title>Focus Timer</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app" id="app" data-screen="idle" data-phase="work">
+    <header class="top">
+      <h1 class="app-name">Focus Timer</h1>
+      <p class="today" id="today"><span class="today-label">Today</span> <span class="today-count" id="today-count">0</span></p>
+      <button type="button" class="icon-btn" id="settings-btn" aria-label="Settings" aria-expanded="false" aria-controls="settings">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </header>
+
+    <section class="panel settings" id="settings" aria-label="Settings" hidden>
+      <div class="field">
+        <label for="set-work">Work</label>
+        <input type="number" id="set-work" min="1" max="120" step="1" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label for="set-short">Short break</label>
+        <input type="number" id="set-short" min="1" max="120" step="1" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label for="set-long">Long break</label>
+        <input type="number" id="set-long" min="1" max="120" step="1" inputmode="numeric">
+      </div>
+      <p class="helper">Minutes, 1-120</p>
+    </section>
+
+    <section class="stage" id="stage" aria-label="Timer">
+      <div class="ring-wrap">
+        <svg class="ring" viewBox="0 0 280 280" aria-hidden="true" focusable="false">
+          <defs>
+            <!-- the mask lives in the progress circle's own (rotated) space, so its arc needs no rotation -->
+            <mask id="ring-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="280" height="280">
+              <circle id="ring-mask-arc" cx="140" cy="140" r="135" fill="none" stroke="#fff" stroke-width="12"/>
+            </mask>
+          </defs>
+          <circle class="ring-track" cx="140" cy="140" r="135" fill="none" stroke-width="10"/>
+          <circle id="ring-progress" class="ring-progress" cx="140" cy="140" r="135" fill="none" stroke-width="10" transform="rotate(-90 140 140)" mask="url(#ring-mask)"/>
+        </svg>
+        <div class="ring-center">
+          <div class="digits" id="digits">25:00</div>
+          <svg class="check" id="check" hidden viewBox="0 0 24 24" width="96" height="96" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M5 12.5l4.5 4.5L19 7.5"/>
+          </svg>
+        </div>
+      </div>
+
+      <h2 class="heading" id="heading" hidden>Session complete</h2>
+      <p class="label" id="label">Ready</p>
+      <p class="note" id="away-note" hidden>Completed while you were away</p>
+
+      <div class="actions">
+        <button type="button" class="btn btn-primary" id="btn-primary" data-action="start">Start</button>
+        <button type="button" class="btn btn-ghost" id="btn-secondary" data-action="reset" hidden>Reset</button>
+      </div>
+
+      <p class="quiet" id="quiet" hidden></p>
+      <p class="note" id="unsaved" hidden>Progress won't be saved on this device</p>
+    </section>
+
+    <section class="panel prefs" id="prefs" aria-label="Alerts" hidden>
+      <label class="check-row"><input type="checkbox" id="pref-sound"> <span>Sound</span></label>
+      <label class="check-row"><input type="checkbox" id="pref-notify"> <span>Notifications</span></label>
+      <p class="hint" id="notify-hint" role="status" hidden></p>
+      <p class="hint">Alerts need this tab to stay open. On a phone the chime may stay silent in the background or with the silent switch on.</p>
+    </section>
+
+    <section class="panel empty" id="empty">
+      <p class="empty-today"><span class="today-label">Today</span> <span class="today-count" id="empty-count">0</span></p>
+      <p class="helper">No sessions yet. Finish a focus session and it shows up here.</p>
+    </section>
+
+    <section class="panel history" id="history" aria-labelledby="history-title" hidden>
+      <h2 class="history-title" id="history-title">Last 10 sessions</h2>
+      <ul class="history-list" id="history-list"></ul>
+    </section>
+
+    <div class="sr-only" id="live" aria-live="polite" aria-atomic="true"></div>
+    <noscript><p class="note">Focus Timer needs JavaScript.</p></noscript>
+  </main>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
